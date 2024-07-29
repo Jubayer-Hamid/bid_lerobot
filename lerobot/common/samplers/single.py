@@ -4,7 +4,7 @@ import ipdb
 
 torch.set_printoptions(precision=1, sci_mode=False)
 
-def coherence_sampler(policy, prior, observation, AH_count, AH_test, num_sample=20, beta=0.90):
+def coherence_sampler(policy, prior, observation, ah_count, ah_test, num_sample=20, beta=0.90):
     ''' 
     Generate multiple action samples from the policy based on the observation.
     If prior is provided, select the most coherent sample based on the prior.
@@ -29,7 +29,7 @@ def coherence_sampler(policy, prior, observation, AH_count, AH_test, num_sample=
 
     if prior is None:
         # generate the first action and action chunk of your trajectory. No coherence sampling needed here
-        action, action_chunk = policy.select_action(observation_batch, AH_test)
+        action, action_chunk = policy.select_action(observation_batch, ah_test)
         action = action.unsqueeze(1)
             
         action_dict_batch = dict()
@@ -47,9 +47,9 @@ def coherence_sampler(policy, prior, observation, AH_count, AH_test, num_sample=
             action_dict[key] = action_dict_batch[key][:, 0]
         return action_dict
 
-    if AH_count != 0:
-        # so AH_count != 0 and we are inside an action chunk. No need to compute new action - take action that we already have to take. 
-        action, action_chunk = policy.select_action(observation_batch, AH_test) # pass things through select_action just so that we store the observations and update the action queue 
+    if ah_count != 0:
+        # we are inside an action chunk. No need to compute new action - take action that we already have to take. 
+        action, action_chunk = policy.select_action(observation_batch, ah_test) # pass things through select_action just so that we store the observations and update the action queue 
         # select action that we had already planned on selecting. This will be the first element in the prior
         action_dict = dict()
         action_dict['action'] = prior[:, :1, :]
@@ -57,7 +57,7 @@ def coherence_sampler(policy, prior, observation, AH_count, AH_test, num_sample=
         return action_dict
 
     # Predict actions and action chunks
-    action, action_chunk = policy.select_action(observation_batch, AH_test)
+    action, action_chunk = policy.select_action(observation_batch, ah_test)
     action = action.unsqueeze(1)
 
     action_dict_batch = dict()
@@ -94,7 +94,7 @@ def coherence_sampler(policy, prior, observation, AH_count, AH_test, num_sample=
         action_dict[key] = action_dict_batch[key][range_tensor, index]
     return action_dict
 
-def random_sampler(policy, prior, observation, AH_count, AH_test, num_sample=20, beta=0.90):
+def random_sampler(policy, prior, observation, ah_count, ah_test, num_sample=20, beta=0.90):
     ''' 
     Given observation, take a random action. 
     '''
@@ -115,9 +115,9 @@ def random_sampler(policy, prior, observation, AH_count, AH_test, num_sample=20,
     observation_batch['observation.image'] = obs_image_repeated
 
 
-    if AH_count == 0: # if you want to do random sampling
+    if ah_count == 0: # if you want to do random sampling
         # generate the action and action chunk of your trajectory
-        action, action_chunk = policy.select_action(observation_batch, AH_test)
+        action, action_chunk = policy.select_action(observation_batch, ah_test)
         action = action.unsqueeze(1)
             
         action_dict_batch = dict()
@@ -135,9 +135,9 @@ def random_sampler(policy, prior, observation, AH_count, AH_test, num_sample=20,
             action_dict[key] = action_dict_batch[key][:, 0]
         return action_dict
 
-    if AH_count != 0:
+    if ah_count != 0:
         # so AH_count != 0 and we are inside an action chunk. No need to compute new action - take action that we already have to take. 
-        action, action_chunk = policy.select_action(observation_batch, AH_test) # pass things through select_action just so that we store the observations and update the action queue 
+        action, action_chunk = policy.select_action(observation_batch, ah_test) # pass things through select_action just so that we store the observations and update the action queue 
         # select action that we had already planned on selecting. This will be the first element in the prior
         action_dict = dict()
         action_dict['action'] = prior[:, :1, :]
