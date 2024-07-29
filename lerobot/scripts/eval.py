@@ -79,7 +79,8 @@ def rollout(
     return_observations: bool = False,
     render_callback: Callable[[gym.vector.VectorEnv], None] | None = None,
     enable_progbar: bool = False,
-    sampler: str = "coherence"  # Add sampler parameter with default value
+    sampler: str = "coherence",  # Add sampler parameter with default value
+    ah_test: int = 1  # Add ah_test parameter with default value
 ) -> dict:
     """Run a batched policy rollout once through a batch of environments.
 
@@ -140,7 +141,6 @@ def rollout(
         leave=False,
     )
     prior = None
-    AH_test = 1
     count = 0
     while not np.all(done):
         # Numpy array to tensor and changing dictionary keys to LeRobot policy format.
@@ -153,12 +153,11 @@ def rollout(
         with torch.inference_mode():
             # action = policy.select_action(observation)
             if sampler == "coherence":
-                action_dict = coherence_sampler(policy, prior, observation, count, AH_test)
+                action_dict = coherence_sampler(policy, prior, observation, count, ah_test)
             if sampler == "random":
-                action_dict = random_sampler(policy, prior, observation, count, AH_test)
+                action_dict = random_sampler(policy, prior, observation, count, ah_test)
             action = action_dict['action']
             prior = action_dict['action_pred'][:, 1:, :] # update prior to not include the action that we are taking in this step
-
 
         # Convert to CPU / numpy.
         action = action.squeeze(1)
@@ -186,7 +185,7 @@ def rollout(
         all_successes.append(torch.tensor(successes))
 
         step += 1
-        count = (count + 1) % AH_test
+        count = (count + 1) % ah_test
         running_success_rate = (
             einops.reduce(torch.stack(all_successes, dim=1), "b n -> b", "any").numpy().mean()
         )
@@ -213,9 +212,6 @@ def rollout(
 
     return ret
 
-
-
-
 def eval_policy(
     env: gym.vector.VectorEnv,
     policy: torch.nn.Module,
@@ -226,7 +222,8 @@ def eval_policy(
     start_seed: int | None = None,
     enable_progbar: bool = False,
     enable_inner_progbar: bool = False,
-    sampler: str = "coherence"  # Add sampler parameter with default value
+    sampler: str = "coherence",  # Add sampler parameter with default value
+    ah_test: int = 1  # Add ah_test parameter with default value
 ) -> dict:
     """
     Args:
@@ -309,7 +306,8 @@ def eval_policy(
             return_observations=return_episode_data,
             render_callback=render_frame if max_episodes_rendered > 0 else None,
             enable_progbar=enable_inner_progbar,
-            sampler=sampler  # Pass the sampler argument
+            sampler=sampler,  # Pass the sampler argument
+            ah_test=ah_test  # Pass the ah_test argument
         )
 
         # Figure out where in each rollout sequence the first done condition was encountered (results after
@@ -471,6 +469,7 @@ def main(
     hydra_cfg_path: str | None = None,
     out_dir: str | None = None,
     config_overrides: list[str] | None = None,
+    ah_test: int = 1  # Add ah_test parameter with default value
 ):
     assert (pretrained_policy_path is None) ^ (hydra_cfg_path is None)
     if pretrained_policy_path is not None:
@@ -513,7 +512,8 @@ def main(
             start_seed=hydra_cfg.seed,
             enable_progbar=True,
             enable_inner_progbar=True,
-            sampler=args.sampler  # Pass the sampler argument
+            sampler=args.sampler,  # Pass the sampler argument
+            ah_test=ah_test  # Pass the ah_test argument
         )
     print(info["aggregated"])
 
@@ -591,10 +591,16 @@ if __name__ == "__main__":
         default="coherence",
         help="Specify which sampler to use: coherence_sampler or random_sampler.",
     )
+    parser.add_argument(
+        "--ah_test",
+        type=int,
+        default=1,
+        help="Specify the ah_test value.",
+    )
     args = parser.parse_args()
 
     if args.pretrained_policy_name_or_path is None:
-        main(hydra_cfg_path=args.config, out_dir=args.out_dir, config_overrides=args.overrides)
+        main(hydra_cfg_path=args.config, out_dir=args.out_dir, config_overrides=args.overrides, ah_test=args.ah_test)
     else:
         pretrained_policy_path = get_pretrained_policy_path(
             args.pretrained_policy_name_or_path, revision=args.revision
@@ -604,5 +610,5 @@ if __name__ == "__main__":
             pretrained_policy_path=pretrained_policy_path,
             out_dir=args.out_dir,
             config_overrides=args.overrides,
+            ah_test=args.ah_test
         )
-
