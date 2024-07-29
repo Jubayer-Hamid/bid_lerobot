@@ -40,7 +40,6 @@ with `qualified.parameter.name=value`. In this case, the parameter eval.n_episod
 nested under `eval` in the `config.yaml` found at
 https://huggingface.co/lerobot/diffusion_pusht/tree/main.
 """
-
 import argparse
 import json
 import logging
@@ -71,7 +70,7 @@ from lerobot.common.policies.policy_protocol import Policy
 from lerobot.common.policies.utils import get_device_from_parameters
 from lerobot.common.utils.io_utils import write_video
 from lerobot.common.utils.utils import get_safe_torch_device, init_hydra_config, init_logging, set_global_seed
-
+from lerobot.common.samplers.single import coherence_sampler, random_sampler
 
 def rollout(
     env: gym.vector.VectorEnv,
@@ -80,6 +79,7 @@ def rollout(
     return_observations: bool = False,
     render_callback: Callable[[gym.vector.VectorEnv], None] | None = None,
     enable_progbar: bool = False,
+    sampler: str = "coherence"  # Add sampler parameter with default value
 ) -> dict:
     """Run a batched policy rollout once through a batch of environments.
 
@@ -139,6 +139,9 @@ def rollout(
         disable=not enable_progbar,
         leave=False,
     )
+    prior = None
+    AH_test = 1
+    count = 0
     while not np.all(done):
         # Numpy array to tensor and changing dictionary keys to LeRobot policy format.
         observation = preprocess_observation(observation)
@@ -148,9 +151,17 @@ def rollout(
         observation = {key: observation[key].to(device, non_blocking=True) for key in observation}
 
         with torch.inference_mode():
-            action = policy.select_action(observation)
+            # action = policy.select_action(observation)
+            if sampler == "coherence":
+                action_dict = coherence_sampler(policy, prior, observation, count, AH_test)
+            if sampler == "random":
+                action_dict = random_sampler(policy, prior, observation, count, AH_test)
+            action = action_dict['action']
+            prior = action_dict['action_pred'][:, 1:, :] # update prior to not include the action that we are taking in this step
+
 
         # Convert to CPU / numpy.
+        action = action.squeeze(1)
         action = action.to("cpu").numpy()
         assert action.ndim == 2, "Action dimensions should be (batch, action_dim)"
 
@@ -175,6 +186,7 @@ def rollout(
         all_successes.append(torch.tensor(successes))
 
         step += 1
+        count = (count + 1) % AH_test
         running_success_rate = (
             einops.reduce(torch.stack(all_successes, dim=1), "b n -> b", "any").numpy().mean()
         )
@@ -202,6 +214,8 @@ def rollout(
     return ret
 
 
+
+
 def eval_policy(
     env: gym.vector.VectorEnv,
     policy: torch.nn.Module,
@@ -212,6 +226,7 @@ def eval_policy(
     start_seed: int | None = None,
     enable_progbar: bool = False,
     enable_inner_progbar: bool = False,
+    sampler: str = "coherence"  # Add sampler parameter with default value
 ) -> dict:
     """
     Args:
@@ -279,6 +294,14 @@ def eval_policy(
             seeds = range(
                 start_seed + (batch_ix * env.num_envs), start_seed + ((batch_ix + 1) * env.num_envs)
             )
+        # rollout_data = rollout(
+        #     env,
+        #     policy,
+        #     seeds=list(seeds) if seeds else None,
+        #     return_observations=return_episode_data,
+        #     render_callback=render_frame if max_episodes_rendered > 0 else None,
+        #     enable_progbar=enable_inner_progbar,
+        # )
         rollout_data = rollout(
             env,
             policy,
@@ -286,6 +309,7 @@ def eval_policy(
             return_observations=return_episode_data,
             render_callback=render_frame if max_episodes_rendered > 0 else None,
             enable_progbar=enable_inner_progbar,
+            sampler=sampler  # Pass the sampler argument
         )
 
         # Figure out where in each rollout sequence the first done condition was encountered (results after
@@ -489,6 +513,7 @@ def main(
             start_seed=hydra_cfg.seed,
             enable_progbar=True,
             enable_inner_progbar=True,
+            sampler=args.sampler  # Pass the sampler argument
         )
     print(info["aggregated"])
 
@@ -560,6 +585,12 @@ if __name__ == "__main__":
         nargs="*",
         help="Any key=value arguments to override config values (use dots for.nested=overrides)",
     )
+    parser.add_argument(
+        "--sampler",
+        choices=["coherence", "random"],
+        default="coherence",
+        help="Specify which sampler to use: coherence_sampler or random_sampler.",
+    )
     args = parser.parse_args()
 
     if args.pretrained_policy_name_or_path is None:
@@ -574,3 +605,4 @@ if __name__ == "__main__":
             out_dir=args.out_dir,
             config_overrides=args.overrides,
         )
+

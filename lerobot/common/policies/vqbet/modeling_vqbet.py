@@ -35,6 +35,8 @@ from lerobot.common.policies.utils import get_device_from_parameters, populate_q
 from lerobot.common.policies.vqbet.configuration_vqbet import VQBeTConfig
 from lerobot.common.policies.vqbet.vqbet_utils import GPT, ResidualVQ
 
+from lerobot.common.samplers.single import coherence_sampler
+import ipdb
 # ruff: noqa: N806
 
 
@@ -74,7 +76,7 @@ class VQBeTPolicy(nn.Module, PyTorchModelHubMixin):
         self.vqbet = VQBeTModel(config)
 
         self.expected_image_keys = [k for k in config.input_shapes if k.startswith("observation.image")]
-
+        self.actions_prior = None
         self.reset()
 
     def reset(self):
@@ -89,16 +91,14 @@ class VQBeTPolicy(nn.Module, PyTorchModelHubMixin):
         }
 
     @torch.no_grad
-    def select_action(self, batch: dict[str, Tensor]) -> Tensor:
+    def select_action(self, batch: dict[str, Tensor], AH_test) -> Tensor:
         """Select a single action given environment observations.
 
         This method wraps `select_actions` in order to return one action at a time for execution in the
         environment. It works by managing the actions in a queue and only calling `select_actions` when the
         queue is empty.
         """
-
         batch = self.normalize_inputs(batch)
-        batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
         batch["observation.images"] = torch.stack([batch[k] for k in self.expected_image_keys], dim=-4)
         # Note: It's important that this happens after stacking the images into a single key.
         self._queues = populate_queues(self._queues, batch)
@@ -108,42 +108,41 @@ class VQBeTPolicy(nn.Module, PyTorchModelHubMixin):
                 "To evaluate in the environment, your VQ-BeT model should contain a pretrained Residual VQ.",
                 stacklevel=1,
             )
-
         if len(self._queues["action"]) == 0:
             batch = {k: torch.stack(list(self._queues[k]), dim=1) for k in batch if k in self._queues}
-            actions = self.vqbet(batch, rollout=True)[:, : self.config.action_chunk_size]
-
+            actions_prior = self.vqbet(batch, rollout=True)[:, : self.config.action_chunk_size]
+            actions = actions_prior[:, : AH_test]
             # the dimension of returned action is (batch_size, action_chunk_size, action_dim)
+            actions_prior = self.unnormalize_outputs({"action": actions_prior})["action"]
             actions = self.unnormalize_outputs({"action": actions})["action"]
             # since the data in the action queue's dimension is (action_chunk_size, batch_size, action_dim), we transpose the action and fill the queue
             self._queues["action"].extend(actions.transpose(0, 1))
-
+            self.actions_prior = actions_prior
         action = self._queues["action"].popleft()
-        return action
+        return action, self.actions_prior
 
     def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         """Run the batch through the model and compute the loss for training or validation."""
         batch = self.normalize_inputs(batch)
-        batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
         batch["observation.images"] = torch.stack([batch[k] for k in self.expected_image_keys], dim=-4)
         batch = self.normalize_targets(batch)
-        # VQ-BeT discretizes action using VQ-VAE before training BeT (please refer to section 3.2 in the VQ-BeT paper https://arxiv.org/pdf/2403.03181)
         if not self.vqbet.action_head.vqvae_model.discretized.item():
-            # loss: total loss of training RVQ
-            # n_different_codes: how many of the total possible VQ codes are being used in single batch (how many of them have at least one encoder embedding as a nearest neighbor). This can be at most `vqvae_n_embed * number of layers of RVQ (=2)`.
-            # n_different_combinations: how many different code combinations are being used out of all possible combinations in single batch. This can be at most `vqvae_n_embed ^ number of layers of RVQ (=2)` (hint consider the RVQ as a decision tree).
             loss, n_different_codes, n_different_combinations, recon_l1_error = (
                 self.vqbet.action_head.discretize(self.config.n_vqvae_training_steps, batch["action"])
-            )
+            )            
+            # Calculate per-sample loss (in this case, it might be the same loss for all samples, assuming VQ-VAE training step)
+            with torch.no_grad():
+                per_sample_loss = torch.full((batch["action"].size(0),), loss.item(), device=loss.device)
             return {
                 "loss": loss,
                 "n_different_codes": n_different_codes,
                 "n_different_combinations": n_different_combinations,
                 "recon_l1_error": recon_l1_error,
+                "per_sample_loss": per_sample_loss
             }
         # if Residual VQ is already trained, VQ-BeT trains its GPT and bin prediction head / offset prediction head parts.
         _, loss_dict = self.vqbet(batch, rollout=False)
-
+        loss_dict['per_sample_loss'] = loss_dict['action_mse_error_per_sample']
         return loss_dict
 
 
@@ -228,7 +227,7 @@ class VQBeTModel(nn.Module):
         and finally generates a prediction for the action chunks.
 
         -------------------------------** legend **-------------------------------
-        │   n = n_obs_steps, p = n_action_pred_token, c = action_chunk_size)   │
+        │   n = n_obs_steps, p = n_action_pred_token, c = action_chunk_size)     │
         │   o_{t} : visual observation at timestep {t}                           │
         │   s_{t} : state observation at timestep {t}                            │
         │   a_{t} : action at timestep {t}                                       │
@@ -494,6 +493,8 @@ class VQBeTHead(nn.Module):
             cbet_logits = einops.rearrange(
                 cbet_logits, "(NT) (G C) -> (NT) G C", G=self.vqvae_model.vqvae_num_layers
             )
+            self.config.bet_softmax_temperature = 1.0
+            print(f'Temperature: {self.config.bet_softmax_temperature}')
             cbet_probs = torch.softmax(cbet_logits / self.config.bet_softmax_temperature, dim=-1)
             NT, G, choices = cbet_probs.shape
             sampled_centers = einops.rearrange(
@@ -591,6 +592,7 @@ class VQBeTHead(nn.Module):
         equal_primary_code_rate = torch.sum((action_bins[:, 0] == sampled_centers[:, 0]).int()) / (NT)
         equal_secondary_code_rate = torch.sum((action_bins[:, 1] == sampled_centers[:, 1]).int()) / (NT)
 
+        action_mse_error_per_sample = torch.mean((action_seq - predicted_action) ** 2, dim=(1, 2))
         action_mse_error = torch.mean((action_seq - predicted_action) ** 2)
         vq_action_error = torch.mean(torch.abs(action_seq - decoded_action))
         offset_action_error = torch.mean(torch.abs(action_seq - predicted_action))
@@ -608,6 +610,7 @@ class VQBeTHead(nn.Module):
             "offset_action_error": offset_action_error.detach().cpu().item(),
             "action_error_max": action_error_max.detach().cpu().item(),
             "action_mse_error": action_mse_error.detach().cpu().item(),
+            "action_mse_error_per_sample": action_mse_error_per_sample.detach().cpu().numpy(),
         }
         return loss_dict
 
