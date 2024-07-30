@@ -7,7 +7,7 @@ torch.set_printoptions(precision=2, sci_mode=False)
 
 # prior, observation, count, ah_test
 
-def contrastive_sampler(strong, weak, prior, obs_dict, ah_count, ah_test, num_sample=10, name='contrast', factor=2):
+def contrastive_sampler(strong, weak, prior, obs_dict, ah_count, ah_test, temperature=1.0, num_sample=10, name='contrast', factor=2):
     """
     Sample an action by contrasting outputs from strong and weak policies.
 
@@ -22,7 +22,7 @@ def contrastive_sampler(strong, weak, prior, obs_dict, ah_count, ah_test, num_sa
     Returns:
         dict: A dictionary of actions sampled using the contrastive approach.
     """
-    
+    # pre-process
     B, OD = obs_dict['observation.state'].shape
     obs_dict_batch = {
         'observation.state': obs_dict['observation.state'].unsqueeze(1).repeat(1, num_sample, 1).view(B * num_sample, OD),
@@ -30,8 +30,8 @@ def contrastive_sampler(strong, weak, prior, obs_dict, ah_count, ah_test, num_sa
     }
 
     # predict
-    action_strong, action_strong_chunk = strong.select_action(obs_dict_batch, ah_test)
-    action_weak, action_weak_chunk = weak.select_action(obs_dict_batch, ah_test)
+    action_strong, action_strong_chunk = strong.select_action(obs_dict_batch, ah_test, temperature)
+    action_weak, action_weak_chunk = weak.select_action(obs_dict_batch, ah_test, temperature)
     action_strong = action_strong.unsqueeze(1)
     action_weak = action_weak.unsqueeze(1)
 
@@ -43,8 +43,6 @@ def contrastive_sampler(strong, weak, prior, obs_dict, ah_count, ah_test, num_sa
     action_weak_batch['action'] = action_weak
     action_weak_batch['action_pred'] = action_weak_chunk
     
-
-
     if ah_count != 0:
         # we are inside an action chunk. No need to compute new action - take action that we already have to take. 
         # take action using prior
@@ -54,7 +52,6 @@ def contrastive_sampler(strong, weak, prior, obs_dict, ah_count, ah_test, num_sa
         return action_dict
 
     # generating new action chunk - do contrastive sampling
-    
     # post-process
     AH, PH, AD = action_strong_batch['action'].shape[1], action_strong_batch['action_pred'].shape[1], action_strong_batch['action_pred'].shape[2]
 
@@ -97,7 +94,7 @@ def contrastive_sampler(strong, weak, prior, obs_dict, ah_count, ah_test, num_sa
         action_dict[key] = action_strong_batch[key][range_tensor, index]
     return action_dict
 
-def bidirectional_sampler(strong, weak, obs_dict, prior, num_sample=10, beta=0.99, factor=2):
+def bidirectional_sampler(strong, weak, obs_dict, prior, temperature=1.0, num_sample=10, beta=0.99, factor=2):
     """
     Sample an action that preserves coherence with a prior and contrast outputs from strong and weak policies.
     Args:

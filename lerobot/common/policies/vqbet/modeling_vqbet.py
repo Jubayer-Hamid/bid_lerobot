@@ -36,7 +36,9 @@ from lerobot.common.policies.vqbet.configuration_vqbet import VQBeTConfig
 from lerobot.common.policies.vqbet.vqbet_utils import GPT, ResidualVQ
 
 from lerobot.common.samplers.single import coherence_sampler
+
 import ipdb
+
 # ruff: noqa: N806
 
 
@@ -91,7 +93,7 @@ class VQBeTPolicy(nn.Module, PyTorchModelHubMixin):
         }
 
     @torch.no_grad
-    def select_action(self, batch: dict[str, Tensor], AH_test) -> Tensor:
+    def select_action(self, batch: dict[str, Tensor], AH_test, temperature: float = 1.0) -> Tensor:
         """Select a single action given environment observations.
 
         This method wraps `select_actions` in order to return one action at a time for execution in the
@@ -110,7 +112,7 @@ class VQBeTPolicy(nn.Module, PyTorchModelHubMixin):
             )
         if len(self._queues["action"]) == 0:
             batch = {k: torch.stack(list(self._queues[k]), dim=1) for k in batch if k in self._queues}
-            actions_prior = self.vqbet(batch, rollout=True)[:, : self.config.action_chunk_size]
+            actions_prior = self.vqbet(batch, rollout=True, temperature=temperature)[:, : self.config.action_chunk_size]
             actions = actions_prior[:, : AH_test]
             # the dimension of returned action is (batch_size, action_chunk_size, action_dim)
             actions_prior = self.unnormalize_outputs({"action": actions_prior})["action"]
@@ -306,7 +308,7 @@ class VQBeTModel(nn.Module):
             torch.row_stack([torch.arange(i, i + self.config.action_chunk_size) for i in range(num_tokens)]),
         )
 
-    def forward(self, batch: dict[str, Tensor], rollout: bool) -> Tensor:
+    def forward(self, batch: dict[str, Tensor], rollout: bool, temperature: float) -> Tensor:
         # Input validation.
         assert set(batch).issuperset({"observation.state", "observation.images"})
         batch_size, n_obs_steps = batch["observation.state"].shape[:2]
@@ -355,7 +357,7 @@ class VQBeTModel(nn.Module):
             [features[:, historical_act_pred_index], features[:, -len_additional_action_token:]], dim=1
         )
         # pass through action head
-        action_head_output = self.action_head(features)
+        action_head_output = self.action_head(features, temperature=temperature)
         # if rollout, VQ-BeT don't calculate loss
         if rollout:
             return action_head_output["predicted_action"][:, n_obs_steps - 1, :].reshape(
@@ -441,7 +443,7 @@ class VQBeTHead(nn.Module):
                 param.requires_grad = False
         return loss, n_different_codes, n_different_combinations, recon_l1_error
 
-    def forward(self, x, **kwargs):
+    def forward(self, x, temperature: float = 1.0, **kwargs):
         # N is the batch size, and T is number of action query tokens, which are process through same GPT
         N, T, _ = x.shape
         # we calculate N and T side parallely. Thus, the dimensions would be
@@ -462,7 +464,7 @@ class VQBeTHead(nn.Module):
 
             # select primary bin first
             cbet_primary_probs = torch.softmax(
-                cbet_primary_logits / self.config.bet_softmax_temperature, dim=-1
+                cbet_primary_logits / temperature, dim=-1
             )
             NT, choices = cbet_primary_probs.shape
             sampled_primary_centers = einops.rearrange(
@@ -493,9 +495,8 @@ class VQBeTHead(nn.Module):
             cbet_logits = einops.rearrange(
                 cbet_logits, "(NT) (G C) -> (NT) G C", G=self.vqvae_model.vqvae_num_layers
             )
-            self.config.bet_softmax_temperature = 1.0
-            print(f'Temperature: {self.config.bet_softmax_temperature}')
-            cbet_probs = torch.softmax(cbet_logits / self.config.bet_softmax_temperature, dim=-1)
+            print(f'Temperature: {temperature}')
+            cbet_probs = torch.softmax(cbet_logits / temperature, dim=-1)
             NT, G, choices = cbet_probs.shape
             sampled_centers = einops.rearrange(
                 torch.multinomial(cbet_probs.view(-1, choices), num_samples=1),

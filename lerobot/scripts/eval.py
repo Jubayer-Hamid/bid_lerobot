@@ -80,9 +80,10 @@ def rollout(
     return_observations: bool = False,
     render_callback: Callable[[gym.vector.VectorEnv], None] | None = None,
     enable_progbar: bool = False,
-    sampler: str = "coherence",  # Add sampler parameter with default value
-    ah_test: int = 1,  # Add ah_test parameter with default value
-    reference_policy: Policy | None = None
+    sampler: str = "coherence", 
+    ah_test: int = 1, 
+    reference_policy: Policy | None = None,
+    temperature: float = 1.0
 ) -> dict:
     """Run a batched policy rollout once through a batch of environments.
 
@@ -155,11 +156,11 @@ def rollout(
         with torch.inference_mode():
             # action = policy.select_action(observation)
             if sampler == "coherence":
-                action_dict = coherence_sampler(policy, prior, observation, count, ah_test)
+                action_dict = coherence_sampler(policy, prior, observation, count, ah_test, temperature=temperature)
             if sampler == "random":
-                action_dict = random_sampler(policy, prior, observation, count, ah_test)
+                action_dict = random_sampler(policy, prior, observation, count, ah_test, temperature=temperature)
             if sampler == "contrastive":
-                action_dict = contrastive_sampler(policy, reference_policy, prior, observation, count, ah_test)
+                action_dict = contrastive_sampler(policy, reference_policy, prior, observation, count, ah_test, temperature=temperature)
             action = action_dict['action']
             prior = action_dict['action_pred'][:, 1:, :] # update prior to not include the action that we are taking in this step
             
@@ -227,9 +228,10 @@ def eval_policy(
     start_seed: int | None = None,
     enable_progbar: bool = False,
     enable_inner_progbar: bool = False,
-    sampler: str = "coherence",  # Add sampler parameter with default value
-    ah_test: int = 1,  # Add ah_test parameter with default value
-    reference_policy: torch.nn.Module | None = None
+    sampler: str = "coherence", 
+    ah_test: int = 1, 
+    reference_policy: torch.nn.Module | None = None,
+    temperature: float = 1.0,
 ) -> dict:
     """
     Args:
@@ -297,14 +299,6 @@ def eval_policy(
             seeds = range(
                 start_seed + (batch_ix * env.num_envs), start_seed + ((batch_ix + 1) * env.num_envs)
             )
-        # rollout_data = rollout(
-        #     env,
-        #     policy,
-        #     seeds=list(seeds) if seeds else None,
-        #     return_observations=return_episode_data,
-        #     render_callback=render_frame if max_episodes_rendered > 0 else None,
-        #     enable_progbar=enable_inner_progbar,
-        # )
         rollout_data = rollout(
             env,
             policy,
@@ -312,9 +306,10 @@ def eval_policy(
             return_observations=return_episode_data,
             render_callback=render_frame if max_episodes_rendered > 0 else None,
             enable_progbar=enable_inner_progbar,
-            sampler=sampler,  # Pass the sampler argument
-            ah_test=ah_test,  # Pass the ah_test argument
-            reference_policy=reference_policy
+            sampler=sampler, 
+            ah_test=ah_test, 
+            reference_policy=reference_policy,
+            temperature=temperature,
         )
 
         # Figure out where in each rollout sequence the first done condition was encountered (results after
@@ -476,8 +471,9 @@ def main(
     hydra_cfg_path: str | None = None,
     out_dir: str | None = None,
     config_overrides: list[str] | None = None,
-    ah_test: int = 1,  # Add ah_test parameter with default value
-    reference_policy_path: Path | None = None,  # Add reference policy parameter
+    ah_test: int = 1,
+    reference_policy_path: Path | None = None,
+    temperature: float = 1.0, 
 ):
     assert (pretrained_policy_path is None) ^ (hydra_cfg_path is None)
     if pretrained_policy_path is not None:
@@ -510,6 +506,8 @@ def main(
     assert isinstance(policy, nn.Module)
     policy.eval()
 
+    policy.vqbet.action_head.config.bet_softmax_temperature = temperature
+
     # Load the reference policy if provided
     if reference_policy_path:
         reference_policy = make_policy(hydra_cfg=hydra_cfg, pretrained_policy_name_or_path=str(reference_policy_path))
@@ -528,9 +526,10 @@ def main(
             start_seed=hydra_cfg.seed,
             enable_progbar=True,
             enable_inner_progbar=True,
-            sampler=args.sampler,  # Pass the sampler argument
-            ah_test=ah_test,  # Pass the ah_test argument
-            reference_policy=reference_policy  # Pass the reference policy
+            sampler=args.sampler, 
+            ah_test=ah_test,  
+            reference_policy=reference_policy,  
+            temperature=temperature    
         )
     print(info["aggregated"])
 
@@ -620,15 +619,23 @@ if __name__ == "__main__":
             "saved using `Policy.save_pretrained`. If not provided, no reference policy is used."
         ),
     )
-    args = parser.parse_args()
 
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=1.0,
+        help="Specify the temperature value for VQBeTHead.",
+    )
+
+    args = parser.parse_args()
     if args.pretrained_policy_name_or_path is None:
         main(
             hydra_cfg_path=args.config,
             out_dir=args.out_dir,
             config_overrides=args.overrides,
             ah_test=args.ah_test,
-            reference_policy_path=args.reference_policy_name_or_path,  # Pass the reference policy argument
+            reference_policy_path=args.reference_policy_name_or_path,
+            temperature=args.temperature,  # Pass the temperature argument
         )
     else:
         pretrained_policy_path = get_pretrained_policy_path(
@@ -640,5 +647,6 @@ if __name__ == "__main__":
             out_dir=args.out_dir,
             config_overrides=args.overrides,
             ah_test=args.ah_test,
-            reference_policy_path=args.reference_policy_name_or_path,  # Pass the reference policy argument
+            reference_policy_path=args.reference_policy_name_or_path,
+            temperature=args.temperature,  # Pass the temperature argument
         )
