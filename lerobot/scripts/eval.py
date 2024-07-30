@@ -71,6 +71,7 @@ from lerobot.common.policies.utils import get_device_from_parameters
 from lerobot.common.utils.io_utils import write_video
 from lerobot.common.utils.utils import get_safe_torch_device, init_hydra_config, init_logging, set_global_seed
 from lerobot.common.samplers.single import coherence_sampler, random_sampler
+from lerobot.common.samplers.multi import contrastive_sampler
 
 def rollout(
     env: gym.vector.VectorEnv,
@@ -80,7 +81,8 @@ def rollout(
     render_callback: Callable[[gym.vector.VectorEnv], None] | None = None,
     enable_progbar: bool = False,
     sampler: str = "coherence",  # Add sampler parameter with default value
-    ah_test: int = 1  # Add ah_test parameter with default value
+    ah_test: int = 1,  # Add ah_test parameter with default value
+    reference_policy: Policy | None = None
 ) -> dict:
     """Run a batched policy rollout once through a batch of environments.
 
@@ -156,8 +158,11 @@ def rollout(
                 action_dict = coherence_sampler(policy, prior, observation, count, ah_test)
             if sampler == "random":
                 action_dict = random_sampler(policy, prior, observation, count, ah_test)
+            if sampler == "contrastive":
+                action_dict = contrastive_sampler(policy, reference_policy, prior, observation, count, ah_test)
             action = action_dict['action']
             prior = action_dict['action_pred'][:, 1:, :] # update prior to not include the action that we are taking in this step
+            
 
         # Convert to CPU / numpy.
         action = action.squeeze(1)
@@ -223,7 +228,8 @@ def eval_policy(
     enable_progbar: bool = False,
     enable_inner_progbar: bool = False,
     sampler: str = "coherence",  # Add sampler parameter with default value
-    ah_test: int = 1  # Add ah_test parameter with default value
+    ah_test: int = 1,  # Add ah_test parameter with default value
+    reference_policy: torch.nn.Module | None = None
 ) -> dict:
     """
     Args:
@@ -307,7 +313,8 @@ def eval_policy(
             render_callback=render_frame if max_episodes_rendered > 0 else None,
             enable_progbar=enable_inner_progbar,
             sampler=sampler,  # Pass the sampler argument
-            ah_test=ah_test  # Pass the ah_test argument
+            ah_test=ah_test,  # Pass the ah_test argument
+            reference_policy=reference_policy
         )
 
         # Figure out where in each rollout sequence the first done condition was encountered (results after
@@ -469,7 +476,8 @@ def main(
     hydra_cfg_path: str | None = None,
     out_dir: str | None = None,
     config_overrides: list[str] | None = None,
-    ah_test: int = 1  # Add ah_test parameter with default value
+    ah_test: int = 1,  # Add ah_test parameter with default value
+    reference_policy_path: Path | None = None,  # Add reference policy parameter
 ):
     assert (pretrained_policy_path is None) ^ (hydra_cfg_path is None)
     if pretrained_policy_path is not None:
@@ -502,6 +510,14 @@ def main(
     assert isinstance(policy, nn.Module)
     policy.eval()
 
+    # Load the reference policy if provided
+    if reference_policy_path:
+        reference_policy = make_policy(hydra_cfg=hydra_cfg, pretrained_policy_name_or_path=str(reference_policy_path))
+        assert isinstance(reference_policy, nn.Module)
+        reference_policy.eval()
+    else:
+        reference_policy = None
+
     with torch.no_grad(), torch.autocast(device_type=device.type) if hydra_cfg.use_amp else nullcontext():
         info = eval_policy(
             env,
@@ -513,7 +529,8 @@ def main(
             enable_progbar=True,
             enable_inner_progbar=True,
             sampler=args.sampler,  # Pass the sampler argument
-            ah_test=ah_test  # Pass the ah_test argument
+            ah_test=ah_test,  # Pass the ah_test argument
+            reference_policy=reference_policy  # Pass the reference policy
         )
     print(info["aggregated"])
 
@@ -547,7 +564,6 @@ def get_pretrained_policy_path(pretrained_policy_name_or_path, revision=None):
             "repo ID, nor is it an existing local directory."
         )
     return pretrained_policy_path
-
 
 if __name__ == "__main__":
     init_logging()
@@ -587,9 +603,9 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--sampler",
-        choices=["coherence", "random"],
+        choices=["coherence", "random", "contrastive"],
         default="coherence",
-        help="Specify which sampler to use: coherence_sampler or random_sampler.",
+        help="Specify which sampler to use: coherence_sampler, random_sampler, or contrastive_sampler.",
     )
     parser.add_argument(
         "--ah_test",
@@ -597,10 +613,23 @@ if __name__ == "__main__":
         default=1,
         help="Specify the ah_test value.",
     )
+    parser.add_argument(
+        "--reference-policy-name-or-path",
+        help=(
+            "Either the repo ID of a reference model hosted on the Hub or a path to a directory containing weights "
+            "saved using `Policy.save_pretrained`. If not provided, no reference policy is used."
+        ),
+    )
     args = parser.parse_args()
 
     if args.pretrained_policy_name_or_path is None:
-        main(hydra_cfg_path=args.config, out_dir=args.out_dir, config_overrides=args.overrides, ah_test=args.ah_test)
+        main(
+            hydra_cfg_path=args.config,
+            out_dir=args.out_dir,
+            config_overrides=args.overrides,
+            ah_test=args.ah_test,
+            reference_policy_path=args.reference_policy_name_or_path,  # Pass the reference policy argument
+        )
     else:
         pretrained_policy_path = get_pretrained_policy_path(
             args.pretrained_policy_name_or_path, revision=args.revision
@@ -610,5 +639,6 @@ if __name__ == "__main__":
             pretrained_policy_path=pretrained_policy_path,
             out_dir=args.out_dir,
             config_overrides=args.overrides,
-            ah_test=args.ah_test
+            ah_test=args.ah_test,
+            reference_policy_path=args.reference_policy_name_or_path,  # Pass the reference policy argument
         )
