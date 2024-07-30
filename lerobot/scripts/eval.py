@@ -161,6 +161,8 @@ def rollout(
                 action_dict = random_sampler(policy, prior, observation, count, ah_test, temperature=temperature)
             if sampler == "contrastive":
                 action_dict = contrastive_sampler(policy, reference_policy, prior, observation, count, ah_test, temperature=temperature)
+            if sampler == "bidirectional":
+                action_dict = bidirectional_sampler(policy, reference_policy, prior, observation, count, ah_test, temperature=temperature)
             action = action_dict['action']
             prior = action_dict['action_pred'][:, 1:, :] # update prior to not include the action that we are taking in this step
             
@@ -602,9 +604,9 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--sampler",
-        choices=["coherence", "random", "contrastive"],
-        default="coherence",
-        help="Specify which sampler to use: coherence_sampler, random_sampler, or contrastive_sampler.",
+        choices=["coherence", "random", "contrastive", "bidirectional"],
+        default="bidirectional",
+        help="Specify which sampler to use: coherence_sampler, random_sampler, contrastive_sampler or bidirectional_sampler.",
     )
     parser.add_argument(
         "--ah_test",
