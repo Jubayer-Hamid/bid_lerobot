@@ -40,6 +40,8 @@ with `qualified.parameter.name=value`. In this case, the parameter eval.n_episod
 nested under `eval` in the `config.yaml` found at
 https://huggingface.co/lerobot/diffusion_pusht/tree/main.
 """
+
+
 import argparse
 import json
 import logging
@@ -71,7 +73,7 @@ from lerobot.common.policies.utils import get_device_from_parameters
 from lerobot.common.utils.io_utils import write_video
 from lerobot.common.utils.utils import get_safe_torch_device, init_hydra_config, init_logging, set_global_seed
 from lerobot.common.samplers.single import coherence_sampler, random_sampler
-from lerobot.common.samplers.multi import contrastive_sampler
+from lerobot.common.samplers.multi import contrastive_sampler, bidirectional_sampler
 
 def rollout(
     env: gym.vector.VectorEnv,
@@ -83,7 +85,8 @@ def rollout(
     sampler: str = "coherence", 
     ah_test: int = 1, 
     reference_policy: Policy | None = None,
-    temperature: float = 1.0
+    temperature: float = 1.0,
+    noise_level: float = 0.0
 ) -> dict:
     """Run a batched policy rollout once through a batch of environments.
 
@@ -165,10 +168,22 @@ def rollout(
                 action_dict = bidirectional_sampler(policy, reference_policy, prior, observation, count, ah_test, temperature=temperature)
             action = action_dict['action']
             prior = action_dict['action_pred'][:, 1:, :] # update prior to not include the action that we are taking in this step
-            
 
-        # Convert to CPU / numpy.
         action = action.squeeze(1)
+        # print(f"Before: {action}")
+        if noise_level > 0.0:
+            noise_seed = (np.random.rand(action.shape[0], 1, action.shape[1]) + 0.5) * np.random.choice([-1, 1], size=(action.shape[0], 1, action.shape[1]))
+            action_step = (action_dict['action_pred'][:, 1:, :] - action_dict['action_pred'][:, :-1, :]).cpu().numpy()  # Convert to numpy
+            if action_step.shape[1] > 0:  # Check if the second dimension of action_step has a valid size
+                noise_step = noise_seed.repeat(action_step.shape[1], axis=1) * action_step
+                noise_cum = np.cumsum(noise_step, axis=1)
+                action = action + torch.from_numpy(noise_cum[:, 0, :]).to(action.device) * noise_level  # only add noise to the action for the current timestep
+            else:
+                noise_direct = (np.random.rand(action.shape[0], action.shape[1]) - 0.5) * noise_level
+                action = action + torch.from_numpy(noise_direct).to(action.device)
+
+        # print(f"After: {action}")
+        # Convert to CPU / numpy.
         action = action.to("cpu").numpy()
         assert action.ndim == 2, "Action dimensions should be (batch, action_dim)"
 
@@ -234,6 +249,7 @@ def eval_policy(
     ah_test: int = 1, 
     reference_policy: torch.nn.Module | None = None,
     temperature: float = 1.0,
+    noise_level: float = 0.0
 ) -> dict:
     """
     Args:
@@ -312,6 +328,7 @@ def eval_policy(
             ah_test=ah_test, 
             reference_policy=reference_policy,
             temperature=temperature,
+            noise_level=noise_level,
         )
 
         # Figure out where in each rollout sequence the first done condition was encountered (results after
@@ -476,6 +493,7 @@ def main(
     ah_test: int = 1,
     reference_policy_path: Path | None = None,
     temperature: float = 1.0, 
+    noise_level: float = 0.0
 ):
     assert (pretrained_policy_path is None) ^ (hydra_cfg_path is None)
     if pretrained_policy_path is not None:
@@ -531,7 +549,8 @@ def main(
             sampler=args.sampler, 
             ah_test=ah_test,  
             reference_policy=reference_policy,  
-            temperature=temperature    
+            temperature=temperature,
+            noise_level=noise_level
         )
     print(info["aggregated"])
 
@@ -629,6 +648,13 @@ if __name__ == "__main__":
         help="Specify the temperature value for VQBeTHead.",
     )
 
+    parser.add_argument(
+        "--noise_level",
+        type=float,
+        default=0.0,
+        help="Specify the noise level to be added to actions.",
+    )
+
     args = parser.parse_args()
     if args.pretrained_policy_name_or_path is None:
         main(
@@ -638,6 +664,7 @@ if __name__ == "__main__":
             ah_test=args.ah_test,
             reference_policy_path=args.reference_policy_name_or_path,
             temperature=args.temperature,  # Pass the temperature argument
+            noise_level=args.noise_level  # Pass the noise_level argument
         )
     else:
         pretrained_policy_path = get_pretrained_policy_path(
@@ -651,4 +678,5 @@ if __name__ == "__main__":
             ah_test=args.ah_test,
             reference_policy_path=args.reference_policy_name_or_path,
             temperature=args.temperature,  # Pass the temperature argument
+            noise_level=args.noise_level  # Pass the noise_level argument
         )
