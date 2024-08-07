@@ -41,7 +41,6 @@ nested under `eval` in the `config.yaml` found at
 https://huggingface.co/lerobot/diffusion_pusht/tree/main.
 """
 
-
 import argparse
 import json
 import logging
@@ -117,6 +116,11 @@ def rollout(
         render_callback: Optional rendering callback to be used after the environments are reset, and after
             every step.
         enable_progbar: Enable a progress bar over rollout steps.
+        sampler: The sampler to use for action selection.
+        ah_test: The action horizon used by policy. This has to be less than or equal to the policy's prediction horizon.
+        reference_policy: The reference policy to use for contrastive or bidirectional sampling.
+        temperature: The temperature to use in policy for action selection.
+        noise_level: The noise level in the environment
     Returns:
         The dictionary described above.
     """
@@ -148,6 +152,7 @@ def rollout(
     )
     prior = None
     count = 0
+    noise_count = 0
     while not np.all(done):
         # Numpy array to tensor and changing dictionary keys to LeRobot policy format.
         observation = preprocess_observation(observation)
@@ -156,8 +161,9 @@ def rollout(
 
         observation = {key: observation[key].to(device, non_blocking=True) for key in observation}
 
+        time_start = time.time()
+
         with torch.inference_mode():
-            # action = policy.select_action(observation)
             if sampler == "coherence":
                 action_dict = coherence_sampler(policy, prior, observation, count, ah_test, temperature=temperature)
             if sampler == "random":
@@ -170,19 +176,43 @@ def rollout(
             prior = action_dict['action_pred'][:, 1:, :] # update prior to not include the action that we are taking in this step
 
         action = action.squeeze(1)
-        # print(f"Before: {action}")
-        if noise_level > 0.0:
-            noise_seed = (np.random.rand(action.shape[0], 1, action.shape[1]) + 0.5) * np.random.choice([-1, 1], size=(action.shape[0], 1, action.shape[1]))
-            action_step = (action_dict['action_pred'][:, 1:, :] - action_dict['action_pred'][:, :-1, :]).cpu().numpy()  # Convert to numpy
+
+        # Add temporally correlated noise 
+        if ah_test > 1:
+            # add noise that is temporally correlated across ah_test steps 
+            if count == 0:
+                if noise_level > 0.0:
+                    noise_seed = (np.random.rand(action_dict['action_pred'].shape[0], 1, action_dict['action_pred'].shape[2]) + 0.5) * np.random.choice([-1, 1], size=(action_dict['action_pred'].shape[0], 1, action_dict['action_pred'].shape[2]))
+                    action_step = (action_dict['action_pred'][:, 1:] - action_dict['action_pred'][:, :-1]).cpu().numpy()  # Convert to numpy
+                    if action_step.shape[1] > 0:  # Check if the second dimension of action_step has a valid size
+                        noise_step = noise_seed.repeat(action_step.shape[1], axis=1) * action_step
+                        noise_cum = np.cumsum(noise_step, axis=1)
+                        action = action + torch.from_numpy(noise_cum[:, 0, :]).to(action.device) * noise_level  # add noise to the current action
+                        # Add noise to the prior actions
+                        prior_noise = torch.from_numpy(noise_cum).to(prior.device) * noise_level
+                        prior = prior + prior_noise
+                    else:
+                        # Add noise directly to the action
+                        noise_direct = (np.random.rand(action.shape[0], action.shape[1]) - 0.5) * noise_level
+                        action = action + torch.from_numpy(noise_direct).to(action.device)
+        
+        if ah_test == 1:
+            # add noise that is temporally correlated across 3 steps 
+            if noise_count == 0:
+                noise_seed = (np.random.rand(action_dict['action_pred'].shape[0], 1, action_dict['action_pred'].shape[2]) + 0.5) * np.random.choice([-1, 1], size=(action_dict['action_pred'].shape[0], 1, action_dict['action_pred'].shape[2]))
+                action_step = (action_dict['action_pred'][:, 1:] - action_dict['action_pred'][:, :-1]).cpu().numpy()  # Convert to numpy
             if action_step.shape[1] > 0:  # Check if the second dimension of action_step has a valid size
                 noise_step = noise_seed.repeat(action_step.shape[1], axis=1) * action_step
                 noise_cum = np.cumsum(noise_step, axis=1)
-                action = action + torch.from_numpy(noise_cum[:, 0, :]).to(action.device) * noise_level  # only add noise to the action for the current timestep
+                action = action + torch.from_numpy(noise_cum[:, 0, :]).to(action.device) * noise_level  # add noise to the current action
+                # Add noise to the prior actions
+                prior_noise = torch.from_numpy(noise_cum).to(prior.device) * noise_level
+                prior = prior + prior_noise
             else:
+                # Add noise directly to the action
                 noise_direct = (np.random.rand(action.shape[0], action.shape[1]) - 0.5) * noise_level
                 action = action + torch.from_numpy(noise_direct).to(action.device)
 
-        # print(f"After: {action}")
         # Convert to CPU / numpy.
         action = action.to("cpu").numpy()
         assert action.ndim == 2, "Action dimensions should be (batch, action_dim)"
@@ -208,7 +238,9 @@ def rollout(
         all_successes.append(torch.tensor(successes))
 
         step += 1
-        count = (count + 1) % ah_test
+        count = (count + 1) 
+        count = count % ah_test if ah_test > 1 else count % 3
+        noise_count = (noise_count + 1) % 3
         running_success_rate = (
             einops.reduce(torch.stack(all_successes, dim=1), "b n -> b", "any").numpy().mean()
         )
@@ -640,14 +672,12 @@ if __name__ == "__main__":
             "saved using `Policy.save_pretrained`. If not provided, no reference policy is used."
         ),
     )
-
     parser.add_argument(
         "--temperature",
         type=float,
         default=1.0,
         help="Specify the temperature value for VQBeTHead.",
     )
-
     parser.add_argument(
         "--noise_level",
         type=float,
@@ -663,8 +693,8 @@ if __name__ == "__main__":
             config_overrides=args.overrides,
             ah_test=args.ah_test,
             reference_policy_path=args.reference_policy_name_or_path,
-            temperature=args.temperature,  # Pass the temperature argument
-            noise_level=args.noise_level  # Pass the noise_level argument
+            temperature=args.temperature,
+            noise_level=args.noise_level
         )
     else:
         pretrained_policy_path = get_pretrained_policy_path(
@@ -677,6 +707,6 @@ if __name__ == "__main__":
             config_overrides=args.overrides,
             ah_test=args.ah_test,
             reference_policy_path=args.reference_policy_name_or_path,
-            temperature=args.temperature,  # Pass the temperature argument
-            noise_level=args.noise_level  # Pass the noise_level argument
+            temperature=args.temperature,
+            noise_level=args.noise_level
         )

@@ -94,7 +94,7 @@ def contrastive_sampler(strong, weak, prior, obs_dict, ah_count, ah_test, temper
         action_dict[key] = action_strong_batch[key][range_tensor, index]
     return action_dict
 
-def bidirectional_sampler(strong, weak, prior, obs_dict, ah_count, ah_test, temperature=1.0, num_sample=20, beta=0.90, factor=5):
+def bidirectional_sampler(strong, weak, prior, obs_dict, ah_count, ah_test, temperature=1.0, num_sample=20, beta=0.90, factor=2):
     """
     Sample an action that preserves coherence with a prior and contrast outputs from strong and weak policies.
     Args:
