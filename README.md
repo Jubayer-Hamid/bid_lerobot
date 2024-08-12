@@ -1,6 +1,6 @@
 # Bidirectional Behavioral Sampling
 
-This repository accompanies the paper **Bidirectional Action Decoding: Understanding and Improving Action Chunking for Generative Behavior Cloning**. 
+This repository accompanies the paper **Bidirectional Behavioral Sampling: Understanding and Improving Action Chunking for Generative Behavior Cloning**. 
 
 We adapted the [LeRobot repository](https://github.com/huggingface/lerobot) to implement Bidirectional Behavioral Sampling on the VQ-BeT policy. Our experiments run VQ-BeT on the PushT environment. 
 
@@ -49,7 +49,7 @@ This requires the following additional arguments:
 (1) a weak policy for contrastive sampling. We use the [early checkpoint](https://drive.google.com/drive/u/0/folders/1FXHzPZPfTO7SCM-OTKUy3EEvKKTq3LC4). 
 
 
-To use bidirectional action decoding, run the following command:
+To use bidirectional sampling, run the following command:
 ```
 bash commands/eval_bidirectional_sampler.sh
 ```
@@ -57,7 +57,7 @@ This requires the same arguments as contrastive sampling.
 
 ## Expected results 
 
-We provide expected success rate for comparison of vanilla sampling and BBS (both open and closed loop):
+We provide the expected success rate for the comparison of vanilla sampling and BBS (both open and closed loop):
 
 |              | Vanilla Open Loop | BBS Open Loop | Vanilla Closed Loop | BBS Closed Loop |
 |--------------|-------------------|---------------|---------------------|-----------------|
