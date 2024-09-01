@@ -1,46 +1,3 @@
-#!/usr/bin/env python
-
-# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-"""Evaluate a policy on an environment by running rollouts and computing metrics.
-
-Usage examples:
-
-You want to evaluate a model from the hub (eg: https://huggingface.co/lerobot/diffusion_pusht)
-for 10 episodes.
-
-```
-python lerobot/scripts/eval.py -p lerobot/diffusion_pusht eval.n_episodes=10
-```
-
-OR, you want to evaluate a model checkpoint from the LeRobot training script for 10 episodes.
-
-```
-python lerobot/scripts/eval.py \
-    -p outputs/train/diffusion_pusht/checkpoints/005000/pretrained_model \
-    eval.n_episodes=10
-```
-
-Note that in both examples, the repo/folder should contain at least `config.json`, `config.yaml` and
-`model.safetensors`.
-
-Note the formatting for providing the number of episodes. Generally, you may provide any number of arguments
-with `qualified.parameter.name=value`. In this case, the parameter eval.n_episodes appears as `n_episodes`
-nested under `eval` in the `config.yaml` found at
-https://huggingface.co/lerobot/diffusion_pusht/tree/main.
-"""
-
 import argparse
 import json
 import logging
@@ -116,11 +73,6 @@ def rollout(
         render_callback: Optional rendering callback to be used after the environments are reset, and after
             every step.
         enable_progbar: Enable a progress bar over rollout steps.
-        sampler: The sampler to use for action selection.
-        ah_test: The action horizon used by policy. This has to be less than or equal to the policy's prediction horizon.
-        reference_policy: The reference policy to use for contrastive or bidirectional sampling.
-        temperature: The temperature to use in policy for action selection.
-        noise_level: The noise level in the environment
     Returns:
         The dictionary described above.
     """
@@ -159,11 +111,9 @@ def rollout(
         if return_observations:
             all_observations.append(deepcopy(observation))
 
-        observation = {key: observation[key].to(device, non_blocking=True) for key in observation}
-
-        time_start = time.time()
-
+        observation = {key: observation[key].to(device, non_blocking=True) for key in observation}  
         with torch.inference_mode():
+            # action = policy.select_action(observation)
             if sampler == "coherence":
                 action_dict = coherence_sampler(policy, prior, observation, count, ah_test, temperature=temperature)
             if sampler == "random":
@@ -175,11 +125,10 @@ def rollout(
             action = action_dict['action']
             prior = action_dict['action_pred'][:, 1:, :] # update prior to not include the action that we are taking in this step
 
-        action = action.squeeze(1)
 
-        # Add temporally correlated noise 
+        action = action.squeeze(1)
+        
         if ah_test > 1:
-            # add noise that is temporally correlated across ah_test steps 
             if count == 0:
                 if noise_level > 0.0:
                     noise_seed = (np.random.rand(action_dict['action_pred'].shape[0], 1, action_dict['action_pred'].shape[2]) + 0.5) * np.random.choice([-1, 1], size=(action_dict['action_pred'].shape[0], 1, action_dict['action_pred'].shape[2]))
@@ -197,7 +146,6 @@ def rollout(
                         action = action + torch.from_numpy(noise_direct).to(action.device)
         
         if ah_test == 1:
-            # add noise that is temporally correlated across 3 steps 
             if noise_count == 0:
                 noise_seed = (np.random.rand(action_dict['action_pred'].shape[0], 1, action_dict['action_pred'].shape[2]) + 0.5) * np.random.choice([-1, 1], size=(action_dict['action_pred'].shape[0], 1, action_dict['action_pred'].shape[2]))
                 action_step = (action_dict['action_pred'][:, 1:] - action_dict['action_pred'][:, :-1]).cpu().numpy()  # Convert to numpy
@@ -212,8 +160,6 @@ def rollout(
                 # Add noise directly to the action
                 noise_direct = (np.random.rand(action.shape[0], action.shape[1]) - 0.5) * noise_level
                 action = action + torch.from_numpy(noise_direct).to(action.device)
-
-        # Convert to CPU / numpy.
         action = action.to("cpu").numpy()
         assert action.ndim == 2, "Action dimensions should be (batch, action_dim)"
 
@@ -238,9 +184,8 @@ def rollout(
         all_successes.append(torch.tensor(successes))
 
         step += 1
-        count = (count + 1) 
-        count = count % ah_test if ah_test > 1 else count % 3
-        noise_count = (noise_count + 1) % 3
+        count = (count + 1) % ah_test
+        noise_count = (noise_count + 1) % 5 # adding noise temporally correlated over 5 steps 
         running_success_rate = (
             einops.reduce(torch.stack(all_successes, dim=1), "b n -> b", "any").numpy().mean()
         )
@@ -672,12 +617,14 @@ if __name__ == "__main__":
             "saved using `Policy.save_pretrained`. If not provided, no reference policy is used."
         ),
     )
+
     parser.add_argument(
         "--temperature",
         type=float,
         default=1.0,
         help="Specify the temperature value for VQBeTHead.",
     )
+
     parser.add_argument(
         "--noise_level",
         type=float,
@@ -710,3 +657,4 @@ if __name__ == "__main__":
             temperature=args.temperature,
             noise_level=args.noise_level
         )
+
