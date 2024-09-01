@@ -22,13 +22,13 @@ from pathlib import Path
 from huggingface_hub import snapshot_download
 
 # Define the path where you want to download the checkpoint
-download_path = Path("/lerobot/ckpt/vqbet_pusht")
+download_path = Path("/lerobot/ckpt")
 
 # Download the checkpoint directory
 snapshot_download(repo_id="lerobot/vqbet_pusht", local_dir=download_path)
 ```
 
-Forward contrast sampling and bidirectional decoding require a reference policy. In our experiments, we used an [early checkpoint](https://drive.google.com/drive/u/0/folders/1FXHzPZPfTO7SCM-OTKUy3EEvKKTq3LC4) for the source of negative samples. One can direclty download the ["pretrained_weak_model"](https://drive.google.com/drive/u/0/folders/1kBPDBcPU3gLYCZNxkoRpXQ_e3tqi9lPR) and use it as the reference policy. Download and save the weak pre-trained checkpoint in ```lerobot/ckpt```. 
+Forward contrast sampling and bidirectional decoding require a reference policy. In our experiments, we used an [early checkpoint](https://drive.google.com/drive/u/0/folders/1FXHzPZPfTO7SCM-OTKUy3EEvKKTq3LC4) for the source of negative samples. One can direclty download the ["pretrained_weak_model"](https://drive.google.com/drive/u/0/folders/1kBPDBcPU3gLYCZNxkoRpXQ_e3tqi9lPR) and use it as the reference policy. Download and save the weak pre-trained checkpoint as ```lerobot/ckpt/pretrained_weak_model```. 
 
 To use random sampling, run the following command:
 ```
