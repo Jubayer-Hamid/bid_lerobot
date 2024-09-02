@@ -1,6 +1,22 @@
 # Bidirectional Decoding
 
-This repository accompanies the paper **Bidirectional Decoding: Improving Action Chunking via Closed-Loop Resampling** by Yuejiang Liu, Jubayer Ibn Hamid, Annie Xie, Yoonho Lee, Maximilian Du and Chelsea Finn. 
+**[`Website`](https://bid-robot.github.io) | [`Paper`](https://arxiv.org/abs/2408.17355) | [`BiD + LeRobot`](https://github.com/Jubayer-Hamid/bid_lerobot) | [`BiD + DP`](https://github.com/YuejiangLIU/bid_dp)**
+
+This repo contains the official implementation of \
+Bidirectional Decoding: Improving Action Chunking via Closed-Loop Resampling. \
+<a href="https://sites.google.com/view/yuejiangliu/">Yuejiang Liu*</a>,
+<a href="https://jubayer-hamid.github.io/">Jubayer Ibn Hamid*</a>,
+<a href="https://anxie.github.io/">Annie Xie</a>,
+<a href="https://yoonholee.com//">Yoonho Lee</a>,
+<a href="https://maximiliandu.com/">Maximilian Du</a>,
+<a href="https://ai.stanford.edu/~cbfinn/">Chelsea Finn</a> \
+IRIS Lab, Stanford University
+
+> Bidirectional Decoding (BID) samples multiple action chunks at each time step and searches for the optimal action based on two criteria:
+>   1. backward coherence, which favors actions close to the decision made in the previous time step
+>   2. forward contrast, which favors actions close to near-optimal long-horizon plans and far from sub-optimal short-horizon ones
+> 
+> By coupling decisions within and across action chunks, BID improves temporal consistency over multiple time steps while maintaining high reactivity to unexpected states in stochasticity environments.
 
 We adapted the [LeRobot repository](https://github.com/huggingface/lerobot) to implement Bidirectional Decoding on the VQ-BeT policy. Our experiments run VQ-BeT on the PushT environment. 
 
@@ -84,3 +100,21 @@ We also evaluate the performance of each of the forward contrast and backward co
 | Method           |   Backward Coherence     |   Forward Contrast  |   Bidirectional Decoding  |
 |------------------|--------------------------|---------------------|---------------------------|
 | Noise = 1.5      |        46.8              |          47.4       |         54.4              |
+
+
+## Citation
+
+If you find this code useful for your research, please cite our paper:
+
+```bibtex
+@article{liu2024bidirectional,
+  title   = {Bidirectional Decoding: Improving Action Chunking via Closed-Loop Resampling},
+  author  = {Liu, Yuejiang and Hamid, Jubayer Ibn and Xie, Annie and Lee, Yoonho and Du, Maximilian and Finn, Chelsea},
+  journal = {arXiv preprint arXiv:2408.17355},
+  year    = {2024}
+}
+```
+
+## Acknowledgement
+
+Code adapted from [LeRobot](https://github.com/huggingface/lerobot)
