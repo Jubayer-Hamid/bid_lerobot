@@ -14,9 +14,9 @@ IRIS Lab, Stanford University
 
 > Bidirectional Decoding (BID) samples multiple action chunks at each time step and searches for the optimal action based on two criteria:
 >   1. backward coherence, which favors actions close to the decision made in the previous time step
->   2. forward contrast, which favors actions close to near-optimal long-horizon plans and far from sub-optimal short-horizon ones
-> 
-> By coupling decisions within and across action chunks, BID improves temporal consistency over multiple time steps while maintaining high reactivity to unexpected states in stochasticity environments.
+>   2. forward contrast, which favors actions close to near-optimal plans and far from sub-optimal ones
+>      
+> BID improves temporal consistency over multiple time steps, while maintaining high reactivity to stochastic dynamics.
 
 We adapted the [LeRobot repository](https://github.com/huggingface/lerobot) to implement Bidirectional Decoding on the VQ-BeT policy. Our experiments run VQ-BeT on the PushT environment. 
 
