@@ -1,6 +1,6 @@
 # Bidirectional Decoding
 
-**[`Website`](https://bid-robot.github.io) | [`Paper`](https://arxiv.org/abs/2408.17355) | [`BiD + LeRobot`](https://github.com/Jubayer-Hamid/bid_lerobot) | [`BiD + DP`](https://github.com/YuejiangLIU/bid_dp)**
+**[`Website`](https://bid-robot.github.io) | [`Paper`](https://arxiv.org/abs/2408.17355) | [`BiD + Diffusion`](https://github.com/YuejiangLIU/bid_dp) | [`BiD + LeRobot`](https://github.com/Jubayer-Hamid/bid_lerobot)**
 
 This repo contains the official implementation of \
 Bidirectional Decoding: Improving Action Chunking via Closed-Loop Resampling. \
@@ -104,7 +104,7 @@ We also evaluate the performance of each of the forward contrast and backward co
 
 ## Citation
 
-If you find this code useful for your research, please cite our paper:
+If you find this code useful for your research, please consider citing our paper:
 
 ```bibtex
 @article{liu2024bidirectional,
@@ -117,4 +117,4 @@ If you find this code useful for your research, please cite our paper:
 
 ## Acknowledgement
 
-Code adapted from [LeRobot](https://github.com/huggingface/lerobot)
+Our implementation is built upon the excellent [LeRobot](https://github.com/huggingface/lerobot) codebase
