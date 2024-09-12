@@ -5,7 +5,7 @@
 This repo contains the official implementation of \
 Bidirectional Decoding: Improving Action Chunking via Closed-Loop Resampling. \
 <a href="https://sites.google.com/view/yuejiangliu/">Yuejiang Liu*</a>,
-<a href="https://jubayer-hamid.github.io/">Jubayer Ibn Hamid*</a>,
+<a href="https://jubayer-ibn-hamid.github.io/">Jubayer Ibn Hamid*</a>,
 <a href="https://anxie.github.io/">Annie Xie</a>,
 <a href="https://yoonholee.com//">Yoonho Lee</a>,
 <a href="https://maximiliandu.com/">Maximilian Du</a>,
