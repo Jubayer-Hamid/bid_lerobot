@@ -3,7 +3,7 @@
 
 
 This repo contains the official implementation of \
-Bidirectional Decoding: Improving Action Chunking via Closed-Loop Resampling. \
+Bidirectional Decoding: Improving Action Chunking via Closed-Loop Resampling. 
 
 
 > Bidirectional Decoding (BID) samples multiple action chunks at each time step and searches for the optimal action based on two criteria:
