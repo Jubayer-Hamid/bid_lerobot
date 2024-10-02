@@ -1,16 +1,7 @@
 # Bidirectional Decoding
 
-**[`Website`](https://bid-robot.github.io) | [`Paper`](https://arxiv.org/abs/2408.17355) | [`BID + Diffusion`](https://github.com/YuejiangLIU/bid_diffusion) | [`BID + LeRobot`](https://github.com/Jubayer-Hamid/bid_lerobot)**
-
 This repo contains the official implementation of \
-Bidirectional Decoding: Improving Action Chunking via Closed-Loop Resampling. \
-<a href="https://sites.google.com/view/yuejiangliu/">Yuejiang Liu*</a>,
-<a href="https://jubayer-ibn-hamid.github.io/">Jubayer Ibn Hamid*</a>,
-<a href="https://anxie.github.io/">Annie Xie</a>,
-<a href="https://yoonholee.com//">Yoonho Lee</a>,
-<a href="https://maximiliandu.com/">Maximilian Du</a>,
-<a href="https://ai.stanford.edu/~cbfinn/">Chelsea Finn</a> \
-IRIS Lab, Stanford University
+Bidirectional Decoding: Improving Action Chunking via Closed-Loop Resampling. 
 
 > Bidirectional Decoding (BID) samples multiple action chunks at each time step and searches for the optimal action based on two criteria:
 >   1. backward coherence, which favors actions close to the decision made in the previous time step
@@ -44,7 +35,7 @@ download_path = Path("/lerobot/ckpt")
 snapshot_download(repo_id="lerobot/vqbet_pusht", local_dir=download_path)
 ```
 
-Forward contrast sampling and bidirectional decoding require a reference policy. In our experiments, we used an [early checkpoint](https://drive.google.com/drive/u/0/folders/1FXHzPZPfTO7SCM-OTKUy3EEvKKTq3LC4) for the source of negative samples. One can direclty download the ["pretrained_weak_model"](https://drive.google.com/drive/u/0/folders/1kBPDBcPU3gLYCZNxkoRpXQ_e3tqi9lPR) and use it as the reference policy. Download and save the weak pre-trained checkpoint as ```lerobot/ckpt/pretrained_weak_model```. 
+Forward contrast sampling and bidirectional decoding require a reference policy. In our experiments, we used an early checkpoint for the source of negative samples. Save the weak pre-trained checkpoint as ```lerobot/ckpt/pretrained_weak_model```. 
 
 To use random sampling, run the following command:
 ```
@@ -67,7 +58,7 @@ To use forward contrast sampling, run the following command:
 bash commands/eval_contrastive_sampler.sh
 ```
 This requires the following additional arguments:
-(1) a weak policy for contrast. We use the [early checkpoint](https://drive.google.com/drive/u/0/folders/1FXHzPZPfTO7SCM-OTKUy3EEvKKTq3LC4). 
+(1) a weak policy for contrast. We use an early checkpoint for this. 
 
 
 To use bidirectional decoding, run the following command:
@@ -102,18 +93,7 @@ We also evaluate the performance of each of the forward contrast and backward co
 | Noise = 1.5      |        46.8              |          47.4       |         54.4              |
 
 
-## Citation
 
-If you find this code useful for your research, please consider citing our paper:
-
-```bibtex
-@article{liu2024bidirectional,
-  title   = {Bidirectional Decoding: Improving Action Chunking via Closed-Loop Resampling},
-  author  = {Liu, Yuejiang and Hamid, Jubayer Ibn and Xie, Annie and Lee, Yoonho and Du, Maximilian and Finn, Chelsea},
-  journal = {arXiv preprint arXiv:2408.17355},
-  year    = {2024}
-}
-```
 
 ## Acknowledgement
 
