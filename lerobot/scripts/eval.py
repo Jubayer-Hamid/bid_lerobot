@@ -661,9 +661,9 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--sampler",
-        choices=["coherence", "random", "contrastive", "bidirectional", "ema"],
+        choices=["coherence", "random", "contrastive", "bidirectional", "ema", "bidirectional latent"],
         default="bidirectional",
-        help="Specify which sampler to use: coherence_sampler, random_sampler, contrastive_sampler or bidirectional_sampler.",
+        help="Specify which sampler to use: coherence_sampler, random_sampler, ema_sampler, contrastive_sampler, bidirectional_sampler or bidirectional_latent_sampler",
     )
     parser.add_argument(
         "--ah_test",
