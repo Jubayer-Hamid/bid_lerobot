@@ -28,12 +28,13 @@ from lerobot.common.policies.policy_protocol import Policy
 from lerobot.common.policies.utils import get_device_from_parameters
 from lerobot.common.utils.io_utils import write_video
 from lerobot.common.utils.utils import get_safe_torch_device, init_hydra_config, init_logging, set_global_seed
-from lerobot.common.samplers.single import coherence_sampler, random_sampler
-from lerobot.common.samplers.multi import contrastive_sampler, bidirectional_sampler
+from lerobot.common.samplers.single import coherence_sampler, random_sampler, ema_sampler
+from lerobot.common.samplers.multi import contrastive_sampler, bidirectional_sampler, bidirectional_sampler_latent
 
 def rollout(
     env: gym.vector.VectorEnv,
     policy: Policy,
+    policy_duplicate: Policy,
     seeds: list[int] | None = None,
     return_observations: bool = False,
     render_callback: Callable[[gym.vector.VectorEnv], None] | None = None,
@@ -42,7 +43,8 @@ def rollout(
     ah_test: int = 1, 
     reference_policy: Policy | None = None,
     temperature: float = 1.0,
-    noise_level: float = 0.0
+    noise_level: float = 0.0,
+    env_stochasticity_seed: int = 1
 ) -> dict:
     """Run a batched policy rollout once through a batch of environments.
 
@@ -103,8 +105,10 @@ def rollout(
         leave=False,
     )
     prior = None
+    prior_latent = None
     count = 0
     noise_count = 0
+    noise_interval = 5
     while not np.all(done):
         # Numpy array to tensor and changing dictionary keys to LeRobot policy format.
         observation = preprocess_observation(observation)
@@ -118,48 +122,78 @@ def rollout(
                 action_dict = coherence_sampler(policy, prior, observation, count, ah_test, temperature=temperature)
             if sampler == "random":
                 action_dict = random_sampler(policy, prior, observation, count, ah_test, temperature=temperature)
+            if sampler == "ema":
+                action_dict = ema_sampler(policy, prior, observation, count, ah_test, temperature=temperature)
             if sampler == "contrastive":
                 action_dict = contrastive_sampler(policy, reference_policy, prior, observation, count, ah_test, temperature=temperature)
             if sampler == "bidirectional":
                 action_dict = bidirectional_sampler(policy, reference_policy, prior, observation, count, ah_test, temperature=temperature)
+            if sampler == "bidirectional latent"
+                action_dict = bidirectional_sampler_latent(policy_duplicate, policy, reference_policy, prior_latent, prior, observation, count, ah_test, temperature=temperature)
+                prior_latent = action_dict['latent'][:,1:,:]
+                if prior_latent.shape[1] == 0:
+                    prior_latent = None
+
+                # need to define prior_latent and need to define update of prior_latent corresponding to prior 
             action = action_dict['action']
             prior = action_dict['action_pred'][:, 1:, :] # update prior to not include the action that we are taking in this step
-
+            
+        # check if prior is empty. if yes, then make prior None
+        if prior.shape[1] == 0:
+            prior = None
+        
 
         action = action.squeeze(1)
-        
+
         if ah_test > 1:
             if count == 0:
                 if noise_level > 0.0:
-                    noise_seed = (np.random.rand(action_dict['action_pred'].shape[0], 1, action_dict['action_pred'].shape[2]) + 0.5) * np.random.choice([-1, 1], size=(action_dict['action_pred'].shape[0], 1, action_dict['action_pred'].shape[2]))
-                    action_step = (action_dict['action_pred'][:, 1:] - action_dict['action_pred'][:, :-1]).cpu().numpy()  # Convert to numpy
-                    if action_step.shape[1] > 0:  # Check if the second dimension of action_step has a valid size
+                    # Set deterministic seed
+                    np.random.seed(env_stochasticity_seed + count)
+                    torch.manual_seed(env_stochasticity_seed + count)
+
+                    noise_seed = (
+                        np.random.rand(action_dict['action_pred'].shape[0], 1, action_dict['action_pred'].shape[2]) + 0.5
+                    ) * np.random.choice(
+                        [-1, 1],
+                        size=(action_dict['action_pred'].shape[0], 1, action_dict['action_pred'].shape[2])
+                    )
+                    action_step = (action_dict['action_pred'][:, 1:] - action_dict['action_pred'][:, :-1]).cpu().numpy()
+                    if action_step.shape[1] > 0:
                         noise_step = noise_seed.repeat(action_step.shape[1], axis=1) * action_step
                         noise_cum = np.cumsum(noise_step, axis=1)
-                        action = action + torch.from_numpy(noise_cum[:, 0, :]).to(action.device) * noise_level  # add noise to the current action
-                        # Add noise to the prior actions
+                        action = action + torch.from_numpy(noise_cum[:, 0, :]).to(action.device) * noise_level
                         prior_noise = torch.from_numpy(noise_cum).to(prior.device) * noise_level
                         prior = prior + prior_noise
                     else:
-                        # Add noise directly to the action
                         noise_direct = (np.random.rand(action.shape[0], action.shape[1]) - 0.5) * noise_level
                         action = action + torch.from_numpy(noise_direct).to(action.device)
-        
+
         if ah_test == 1:
             if noise_count == 0:
-                noise_seed = (np.random.rand(action_dict['action_pred'].shape[0], 1, action_dict['action_pred'].shape[2]) + 0.5) * np.random.choice([-1, 1], size=(action_dict['action_pred'].shape[0], 1, action_dict['action_pred'].shape[2]))
-                action_step = (action_dict['action_pred'][:, 1:] - action_dict['action_pred'][:, :-1]).cpu().numpy()  # Convert to numpy
-            if action_step.shape[1] > 0:  # Check if the second dimension of action_step has a valid size
+                # Set deterministic seed
+                np.random.seed(env_stochasticity_seed + noise_count)
+                torch.manual_seed(env_stochasticity_seed + noise_count)
+
+                noise_seed = (
+                    np.random.rand(action_dict['action_pred'].shape[0], 1, action_dict['action_pred'].shape[2]) + 0.5
+                ) * np.random.choice(
+                    [-1, 1],
+                    size=(action_dict['action_pred'].shape[0], 1, action_dict['action_pred'].shape[2])
+                )
+                action_step = (action_dict['action_pred'][:, 1:] - action_dict['action_pred'][:, :-1]).cpu().numpy()
+            if action_step.shape[1] > 0:
                 noise_step = noise_seed.repeat(action_step.shape[1], axis=1) * action_step
                 noise_cum = np.cumsum(noise_step, axis=1)
-                action = action + torch.from_numpy(noise_cum[:, 0, :]).to(action.device) * noise_level  # add noise to the current action
-                # Add noise to the prior actions
+                action = action + torch.from_numpy(noise_cum[:, 0, :]).to(action.device) * noise_level
                 prior_noise = torch.from_numpy(noise_cum).to(prior.device) * noise_level
                 prior = prior + prior_noise
             else:
-                # Add noise directly to the action
                 noise_direct = (np.random.rand(action.shape[0], action.shape[1]) - 0.5) * noise_level
                 action = action + torch.from_numpy(noise_direct).to(action.device)
+
+
+        
         action = action.to("cpu").numpy()
         assert action.ndim == 2, "Action dimensions should be (batch, action_dim)"
 
@@ -185,7 +219,7 @@ def rollout(
 
         step += 1
         count = (count + 1) % ah_test
-        noise_count = (noise_count + 1) % 5 # adding noise temporally correlated over 5 steps 
+        noise_count = (noise_count + 1) % noise_interval # adding noise temporally correlated over 5 steps 
         running_success_rate = (
             einops.reduce(torch.stack(all_successes, dim=1), "b n -> b", "any").numpy().mean()
         )
@@ -215,6 +249,7 @@ def rollout(
 def eval_policy(
     env: gym.vector.VectorEnv,
     policy: torch.nn.Module,
+    policy_duplicate: torch.nn.Module,
     n_episodes: int,
     max_episodes_rendered: int = 0,
     videos_dir: Path | None = None,
@@ -250,6 +285,7 @@ def eval_policy(
     assert isinstance(policy, Policy)
     start = time.time()
     policy.eval()
+    policy_duplicate.eval()
 
     # Determine how many batched rollouts we need to get n_episodes. Note that if n_episodes is not evenly
     # divisible by env.num_envs we end up discarding some data in the last batch.
@@ -297,6 +333,7 @@ def eval_policy(
         rollout_data = rollout(
             env,
             policy,
+            policy_duplicate,
             seeds=list(seeds) if seeds else None,
             return_observations=return_episode_data,
             render_callback=render_frame if max_episodes_rendered > 0 else None,
@@ -304,8 +341,10 @@ def eval_policy(
             sampler=sampler, 
             ah_test=ah_test, 
             reference_policy=reference_policy,
+
             temperature=temperature,
             noise_level=noise_level,
+            env_stochasticity_seed=start_seed
         )
 
         # Figure out where in each rollout sequence the first done condition was encountered (results after
@@ -475,11 +514,22 @@ def main(
     assert (pretrained_policy_path is None) ^ (hydra_cfg_path is None)
     if pretrained_policy_path is not None:
         hydra_cfg = init_hydra_config(str(pretrained_policy_path / "config.yaml"), config_overrides)
+        hydra_cfg_2 = init_hydra_config(str(pretrained_policy_path / "config.yaml"), config_overrides)
     else:
         hydra_cfg = init_hydra_config(hydra_cfg_path, config_overrides)
+        hydra_cfg_2 = init_hydra_config(hydra_cfg_path, config_overrides)
 
     if out_dir is None:
         out_dir = f"outputs/eval/{dt.now().strftime('%Y-%m-%d/%H-%M-%S')}_{hydra_cfg.env.name}_{hydra_cfg.policy.name}"
+
+
+    # hydra_cfg['seed'] = 100
+    # hydra_cfg['seed'] = 200
+    # hydra_cfg['seed'] = 300
+    # hydra_cfg['seed'] = 400
+    # hydra_cfg['seed'] = 500
+
+    print(f"seed value: {hydra_cfg['seed']}")
 
     # Check device is available
     device = get_safe_torch_device(hydra_cfg.device, log=True)
@@ -500,10 +550,20 @@ def main(
         # Note: We need the dataset stats to pass to the policy's normalization modules.
         policy = make_policy(hydra_cfg=hydra_cfg, dataset_stats=make_dataset(hydra_cfg).stats)
 
+    if hydra_cfg_path is None:
+        policy_2 = make_policy(hydra_cfg=hydra_cfg_2, pretrained_policy_name_or_path=str(pretrained_policy_path))
+    else:
+        # Note: We need the dataset stats to pass to the policy's normalization modules.
+        policy_2 = make_policy(hydra_cfg=hydra_cfg_2, dataset_stats=make_dataset(hydra_cfg_2).stats)
+
     assert isinstance(policy, nn.Module)
     policy.eval()
 
+    assert isinstance(policy_2, nn.Module)
+    policy_2.eval()
+
     policy.vqbet.action_head.config.bet_softmax_temperature = temperature
+    policy_2.vqbet.action_head.config.bet_softmax_temperature = temperature
 
     # Load the reference policy if provided
     if reference_policy_path:
@@ -517,6 +577,7 @@ def main(
         info = eval_policy(
             env,
             policy,
+            policy_2,
             hydra_cfg.eval.n_episodes,
             max_episodes_rendered=10,
             videos_dir=Path(out_dir) / "videos",
@@ -600,7 +661,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--sampler",
-        choices=["coherence", "random", "contrastive", "bidirectional"],
+        choices=["coherence", "random", "contrastive", "bidirectional", "ema"],
         default="bidirectional",
         help="Specify which sampler to use: coherence_sampler, random_sampler, contrastive_sampler or bidirectional_sampler.",
     )
@@ -657,4 +718,3 @@ if __name__ == "__main__":
             temperature=args.temperature,
             noise_level=args.noise_level
         )
-
