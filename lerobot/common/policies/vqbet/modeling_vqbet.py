@@ -93,7 +93,7 @@ class VQBeTPolicy(nn.Module, PyTorchModelHubMixin):
         }
 
     @torch.no_grad
-    def select_action(self, batch: dict[str, Tensor], AH_test, temperature: float = 1.0) -> Tensor:
+    def select_action(self, batch: dict[str, Tensor], AH_test, temperature: float = 1.0, sampled_centers = None) -> Tensor:
         """Select a single action given environment observations.
 
         This method wraps `select_actions` in order to return one action at a time for execution in the
@@ -112,7 +112,9 @@ class VQBeTPolicy(nn.Module, PyTorchModelHubMixin):
             )
         if len(self._queues["action"]) == 0:
             batch = {k: torch.stack(list(self._queues[k]), dim=1) for k in batch if k in self._queues}
-            actions_prior = self.vqbet(batch, rollout=True, temperature=temperature)[:, : self.config.action_chunk_size]
+            # actions_prior = self.vqbet(batch, rollout=True, temperature=temperature)[:, : self.config.action_chunk_size]
+            actions_prior, latent = self.vqbet(batch, rollout=True, temperature=temperature, sampled_centers = sampled_centers)
+            actions_prior = actions_prior[:, : self.config.action_chunk_size]
             actions = actions_prior[:, : AH_test]
             # the dimension of returned action is (batch_size, action_chunk_size, action_dim)
             actions_prior = self.unnormalize_outputs({"action": actions_prior})["action"]
@@ -121,7 +123,7 @@ class VQBeTPolicy(nn.Module, PyTorchModelHubMixin):
             self._queues["action"].extend(actions.transpose(0, 1))
             self.actions_prior = actions_prior
         action = self._queues["action"].popleft()
-        return action, self.actions_prior
+        return action, self.actions_prior, latent
 
     def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         """Run the batch through the model and compute the loss for training or validation."""
@@ -308,7 +310,7 @@ class VQBeTModel(nn.Module):
             torch.row_stack([torch.arange(i, i + self.config.action_chunk_size) for i in range(num_tokens)]),
         )
 
-    def forward(self, batch: dict[str, Tensor], rollout: bool, temperature: float) -> Tensor:
+    def forward(self, batch: dict[str, Tensor], rollout: bool, temperature: float, sampled_centers = None) -> Tensor:
         # Input validation.
         assert set(batch).issuperset({"observation.state", "observation.images"})
         batch_size, n_obs_steps = batch["observation.state"].shape[:2]
@@ -357,12 +359,14 @@ class VQBeTModel(nn.Module):
             [features[:, historical_act_pred_index], features[:, -len_additional_action_token:]], dim=1
         )
         # pass through action head
-        action_head_output = self.action_head(features, temperature=temperature)
+        action_head_output = self.action_head(features, temperature=temperature, sampled_centers = sampled_centers)
         # if rollout, VQ-BeT don't calculate loss
         if rollout:
-            return action_head_output["predicted_action"][:, n_obs_steps - 1, :].reshape(
-                batch_size, self.config.action_chunk_size, -1
-            )
+            # return action_head_output["predicted_action"][:, n_obs_steps - 1, :].reshape(
+            #     batch_size, self.config.action_chunk_size, -1
+            # )
+            sampled_centers = action_head_output["sampled_centers"].reshape(batch_size, -1, action_head_output["sampled_centers"].shape[1])
+            return action_head_output["predicted_action"][:, n_obs_steps - 1, :].reshape(batch_size, self.config.action_chunk_size, -1), sampled_centers
         # else, it calculate overall loss (bin prediction loss, and offset loss)
         else:
             output = batch["action"][:, self.select_target_actions_indices]
@@ -443,7 +447,7 @@ class VQBeTHead(nn.Module):
                 param.requires_grad = False
         return loss, n_different_codes, n_different_combinations, recon_l1_error
 
-    def forward(self, x, temperature: float = 1.0, **kwargs):
+    def forward(self, x, temperature: float = 1.0, sampled_centers = None, **kwargs):
         # N is the batch size, and T is number of action query tokens, which are process through same GPT
         N, T, _ = x.shape
         # we calculate N and T side parallely. Thus, the dimensions would be
@@ -457,8 +461,10 @@ class VQBeTHead(nn.Module):
             "(NT) (G C WA) -> (NT) G C WA",
             G=self.vqvae_model.vqvae_num_layers,
             C=self.config.vqvae_n_embed,
-        )
+        ) 
         # if self.config.sequentially_select is True, bin prediction head first sample the primary code, and then sample secondary code
+        # if sampled_centers is None:
+
         if self.config.sequentially_select:
             cbet_primary_logits = self.map_to_cbet_preds_primary_bin(x)
 
@@ -495,21 +501,16 @@ class VQBeTHead(nn.Module):
             cbet_logits = einops.rearrange(
                 cbet_logits, "(NT) (G C) -> (NT) G C", G=self.vqvae_model.vqvae_num_layers
             )
-            print(f'Temperature: {temperature}')
+            # print(f'Temperature: {temperature}')
             cbet_probs = torch.softmax(cbet_logits / temperature, dim=-1)
             NT, G, choices = cbet_probs.shape
-            sampled_centers = einops.rearrange(
-                torch.multinomial(cbet_probs.view(-1, choices), num_samples=1),
-                "(NT G) 1 -> NT G",
-                NT=NT,
-            )
-
+            if sampled_centers is None:
+                sampled_centers = einops.rearrange(torch.multinomial(cbet_probs.view(-1, choices), num_samples=1), "(NT G) 1 -> NT G", NT=NT)
+            else: 
+                sampled_centers_fake = einops.rearrange(torch.multinomial(cbet_probs.view(-1, choices), num_samples=1), "(NT G) 1 -> NT G", NT=NT)
+        
         device = get_device_from_parameters(self)
-        indices = (
-            torch.arange(NT, device=device).unsqueeze(1),
-            torch.arange(self.vqvae_model.vqvae_num_layers, device=device).unsqueeze(0),
-            sampled_centers,
-        )
+        indices = (torch.arange(NT, device=device).unsqueeze(1), torch.arange(self.vqvae_model.vqvae_num_layers, device=device).unsqueeze(0), sampled_centers)
         # Use advanced indexing to sample the values (Extract the only offsets corresponding to the sampled codes.)
         sampled_offsets = cbet_offsets[indices]
         # Then, sum the offsets over the RVQ layers to get a net offset for the bin prediction
@@ -523,6 +524,7 @@ class VQBeTHead(nn.Module):
         sampled_offsets = einops.rearrange(
             sampled_offsets, "NT (W A) -> NT W A", W=self.config.action_chunk_size
         )
+
         # add offset and decoded centroids
         predicted_action = decoded_action + sampled_offsets
         predicted_action = einops.rearrange(
@@ -589,7 +591,7 @@ class VQBeTHead(nn.Module):
             cbet_loss1 * self.config.primary_code_loss_weight
             + cbet_loss2 * self.config.secondary_code_loss_weight
         )
-
+        
         equal_primary_code_rate = torch.sum((action_bins[:, 0] == sampled_centers[:, 0]).int()) / (NT)
         equal_secondary_code_rate = torch.sum((action_bins[:, 1] == sampled_centers[:, 1]).int()) / (NT)
 
