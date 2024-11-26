@@ -10,12 +10,31 @@ def euclidean_distance(src, tar, reduction='mean'):
     elif reduction == 'none':
         return dist
 
+def manhattan_distance(src, tar, reduction='mean'):
+    # B, (N), T, D
+    diff = torch.abs(src - tar)
+    dist = diff.sum(dim=-1)
+    if reduction == 'mean':
+        return dist.mean(dim=-1)
+    elif reduction == 'none':
+        return dist
+
+def cosine_distance(src, tar, reduction='mean'):
+    # B, (N), T, D
+    dist = 1 - torch.nn.functional.cosine_similarity(src, tar, dim=-1)
+    if reduction == 'mean':
+        return dist.mean(dim=-1)
+    elif reduction == 'none':
+        return dist
+
 def coverage_distance(src, tar, penalty=1000.0):
     B, S, _ = src.shape
     _, T, _ = tar.shape
 
     # Compute all pairwise Euclidean distances
-    dist_matrix = euclidean_distance(tar.unsqueeze(2), src.unsqueeze(1), 'none')
+    # dist_matrix = euclidean_distance(tar.unsqueeze(2), src.unsqueeze(1), 'none')
+    dist_matrix = manhattan_distance(tar.unsqueeze(2), src.unsqueeze(1), 'none')
+    # dist_matrix = cosine_distance(tar.unsqueeze(2), src.unsqueeze(1), 'none')
 
     # Prepare to track the minimum distance for each target and the indices of matches
     min_distances = torch.full((B, T), float('inf'), device=src.device)
