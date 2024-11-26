@@ -493,7 +493,10 @@ class VQBeTHead(nn.Module):
                 "(NT) 1 -> NT",
                 NT=NT,
             )
-            sampled_centers = torch.stack((sampled_primary_centers, sampled_secondary_centers), axis=1)
+            if sampled_centers is None:
+                sampled_centers = torch.stack((sampled_primary_centers, sampled_secondary_centers), axis=1)
+            else:
+                sampled_centers_fake = torch.stack((sampled_primary_centers, sampled_secondary_centers), axis=1)
             cbet_logits = torch.stack([cbet_primary_logits, cbet_secondary_logits], dim=1)
         # if self.config.sequentially_select is False, bin prediction head samples primary and secondary code at once.
         else:
