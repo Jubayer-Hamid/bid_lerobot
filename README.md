@@ -82,25 +82,11 @@ We provide the expected success rate for the comparison of vanilla sampling and 
 
 |              | Vanilla Open Loop | BID Open Loop | Vanilla Closed Loop | BID Closed Loop |
 |--------------|-------------------|---------------|---------------------|-----------------|
-| Noise = 0.0  | 61.0              | **65.2**      | 52.0                | **56.6**        |
-| Noise = 1.0  | 39.0              | 39.8          | 50.4                | **54.8**        |
-| Noise = 1.5  | 19.4              | 21.4          | 44.2                | **54.4**        |
+| Noise = 0.0  | 64.0              | **66.1**      | 48.9                | **54.4**        |
+| Noise = 1.0  | 26.9              | 31.4          | 38.3                | **45.3**        |
+| Noise = 1.5  | 13.0              | 16.0          | 29.5                | **31.7**        |
 
 For vanilla sampling, we use the default LeRobot ```temperature=0.1```. For BID, we used ```temperature=0.5``` to ensure sampling diversity. 
-
-Furthermore, to support our theoretical analysis, we evaluate the performance of various action horizons under vanilla sampling in clean and noisy environments. The expected success rates are:
-
-| Horizon          |   1     |   3  |   5  |
-|------------------|---------|------|------|
-| Noise = 0.0      |  52.0   | 57.6 | 61.0 |
-| Noise = 1.5      |  44.2   | 43.4 | 19.4 |
-
-We also evaluate the performance of each of the forward contrast and backward coherence components of BID in the highly noisy setting with ```Noise = 1.5```. The expected success rates are:
-
-| Method           |   Backward Coherence     |   Forward Contrast  |   Bidirectional Decoding  |
-|------------------|--------------------------|---------------------|---------------------------|
-| Noise = 1.5      |        46.8              |          47.4       |         54.4              |
-
 
 ## Citation
 
