@@ -128,7 +128,7 @@ def rollout(
                 action_dict = contrastive_sampler(policy, reference_policy, prior, observation, count, ah_test, temperature=temperature)
             if sampler == "bidirectional":
                 action_dict = bidirectional_sampler(policy, reference_policy, prior, observation, count, ah_test, temperature=temperature)
-            if sampler == "bidirectional latent"
+            if sampler == "bidirectional latent":
                 action_dict = bidirectional_sampler_latent(policy_duplicate, policy, reference_policy, prior_latent, prior, observation, count, ah_test, temperature=temperature)
                 prior_latent = action_dict['latent'][:,1:,:]
                 if prior_latent.shape[1] == 0:
