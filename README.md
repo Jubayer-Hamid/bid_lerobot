@@ -94,7 +94,7 @@ If you find this code useful for your research, please consider citing our paper
 
 ```bibtex
 @article{liu2024bidirectional,
-  title   = {Bidirectional Decoding: Improving Action Chunking via Closed-Loop Resampling},
+  title   = {Bidirectional Decoding: Improving Action Chunking via Guided Test-Time Sampling},
   author  = {Liu, Yuejiang and Hamid, Jubayer Ibn and Xie, Annie and Lee, Yoonho and Du, Maximilian and Finn, Chelsea},
   journal = {arXiv preprint arXiv:2408.17355},
   year    = {2024}
